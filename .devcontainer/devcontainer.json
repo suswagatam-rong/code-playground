@@ -1,0 +1,44 @@
+{
+    "name": "Spring MVC + JSP Web App (SQLite)",
+    "image": "mcr.microsoft.com/devcontainers/java:3-21-trixie",
+
+    "features": {
+        "ghcr.io/devcontainers/features/java:1": {
+            "version": "none",
+            "installMaven": "true",
+            "installGradle": "false"
+        },
+        "ghcr.io/devcontainers/features/node:2": {},
+        "ghcr.io/devcontainers/features/tomcat:1": {
+            "version": "10.1"
+        },
+        // Installs the sqlite3 command-line tool into your workspace terminal
+        "ghcr.io/devcontainers/features/sqlite3:1": {}
+    },
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "vscjava.vscode-java-pack",
+                "vscjava.vscode-maven",
+                "prokasumi.jsp",
+                "moshfeu.compare-folders",
+                "mtxr.sqltools", // Database GUI infrastructure
+                "mtxr.sqltools-driver-sqlite" // Specific driver to explore SQLite databases
+            ],
+            "settings": {
+                "java.dependency.packagePresentation": "hierarchical"
+            }
+        }
+    },
+
+    "forwardPorts": [8080],
+    "portsAttributes": {
+        "8080": {
+            "label": "Tomcat Server",
+            "onAutoForward": "openPreview"
+        }
+    },
+
+    "postCreateCommand": "mvn clean package"
+}
