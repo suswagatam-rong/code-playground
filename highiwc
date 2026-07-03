@@ -1,0 +1,70 @@
+Here is a draft you can send. It is structured to show the PSO manager that you have thoroughly considered production stability, while clearly presenting the business case to the client.
+**Subject:** CRITICAL: Performance Optimization for Dashboard Login - DB Index Request
+**Hi [Client Name] and [PSO Manager Name],**
+I am writing to request approval for a crucial database optimization to address the performance issues we are seeing with the user dashboard load times during login.
+Currently, the query responsible for fetching the 6-month user activity trends is taking upwards of **5 minutes** to execute. Because this data is fetched synchronously during the login flow, it is severely impacting the user experience. Our target SLA for this API is **under 2 seconds**.
+**What We Have Done So Far**
+We have heavily refactored the application code to shift the processing load away from the database. We removed all heavy aggregations, date math, and pivot functions from the SQL query and moved them into Java memory.
+**The Root Cause**
+Despite the highly optimized SQL, the query is still being forced to perform full table scans across the ckyc_dashboard_base, account_dashboard_base, and account_dashboard_base_ni tables. Given that these tables house roughly 30–40 crore rows, these full table scans are causing the 5+ minute delays.
+**The Proposed Solution & Risk Mitigation**
+To resolve this, we need to add **covering indexes** to these three tables. I understand the operational risks of indexing tables of this size (~200TB), so I have designed the request specifically to ensure zero downtime and minimal impact on production:
+ * **Covering Indexes:** The indexes include all columns the query selects, meaning the database will never have to read the actual massive tables (no ROWID lookups) to serve this data.
+ * **Zero Downtime (ONLINE):** The indexes must be built using the ONLINE keyword to ensure no table locks occur and standard operations continue uninterrupted.
+ * **Fast Build (PARALLEL):** Using parallel execution will drastically reduce the time it takes to build the indexes.
+**Requested DBA Action Items:**
+Could we please have the DBA team review and execute the following index creations? *(Note to DBAs: If these tables are partitioned by date, please append the LOCAL keyword to these scripts).*
+```sql
+-- 1. CKYC Index (Includes account_type_flag for a 100% covering index)
+CREATE INDEX idx_ckyc_maker_dates 
+ON ckyc_dashboard_base (maker_id, approver_approval_date, APPROVER_REJECTED_DATE, account_type_flag) 
+ONLINE PARALLEL 8;
+
+-- 2. Account Individual Index
+CREATE INDEX idx_acct_maker_dates 
+ON account_dashboard_base (maker_id, approver_approval_date, APPROVER_REJECTED_DATE) 
+ONLINE PARALLEL 8;
+
+-- 3. Account Non-Individual Index
+CREATE INDEX idx_acct_ni_maker_dates 
+ON account_dashboard_base_ni (maker_id, approver_approval_date, APPROVER_REJECTED_DATE) 
+ONLINE PARALLEL 8;
+
+```
+Once built, could the team also execute DBMS_STATS.GATHER_TABLE_STATS for these three tables so the Oracle optimizer immediately utilizes the new execution plans?
+Please let me know if we can get this scheduled or if the DBA team needs to jump on a quick call to discuss.
+Best regards,
+**[Your Name]** [Your Title]
+
+
+
+
+BEGIN
+    -- 1. Gather stats for CKYC table
+    DBMS_STATS.GATHER_TABLE_STATS (
+        ownname          => 'CKYC',
+        tabname          => 'CKYC_DASHBOARD_BASE',
+        estimate_percent => DBMS_STATS.AUTO_SAMPLE_SIZE,
+        cascade          => TRUE,
+        degree           => 8
+    );
+
+    -- 2. Gather stats for Account Individual table
+    DBMS_STATS.GATHER_TABLE_STATS (
+        ownname          => 'CKYC',
+        tabname          => 'ACCOUNT_DASHBOARD_BASE',
+        estimate_percent => DBMS_STATS.AUTO_SAMPLE_SIZE,
+        cascade          => TRUE,
+        degree           => 8
+    );
+
+    -- 3. Gather stats for Account Non-Individual table
+    DBMS_STATS.GATHER_TABLE_STATS (
+        ownname          => 'CKYC',
+        tabname          => 'ACCOUNT_DASHBOARD_BASE_NI',
+        estimate_percent => DBMS_STATS.AUTO_SAMPLE_SIZE,
+        cascade          => TRUE,
+        degree           => 8
+    );
+END;
+/
