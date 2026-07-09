@@ -1,0 +1,145 @@
+public List<Map<String, Object>> fetchMonthlyApprovalTrends(String userId, String privilege) {
+    logger.info("CHART_DATA_INIT: Fetching 6-month approval trends for User [{}] with Privilege [{}]", userId, privilege);
+
+    // Calculate the start date in Java to remove database date functions
+    java.time.LocalDate currentMonthStart = java.time.LocalDate.now().withDayOfMonth(1);
+    java.time.LocalDate startDateLocal = currentMonthStart.minusMonths(5);
+    java.sql.Date sqlStartDate = java.sql.Date.valueOf(startDateLocal);
+
+    Map<String, Object> params = new HashMap<>();
+    params.put("approverId", userId);
+    params.put("startDate", sqlStartDate);
+
+    // Determine filters
+    boolean viewIndividual = "Individual".equals(privilege) || "Normal".equals(privilege);
+    boolean viewNonIndividual = "Non-Individual".equals(privilege) || "Normal".equals(privilege);
+
+    if (!viewIndividual && !viewNonIndividual) {
+        logger.info("CHART_DATA_FAILURE: Invalid privilege [{}] for User [{}]. Returning empty list.", privilege, userId);
+        return new ArrayList<>();
+    }
+
+    StringBuilder sqlBuilder = new StringBuilder();
+    boolean needsUnion = false;
+
+    // --- 1. CIF FLOW ---
+    if (viewIndividual || viewNonIndividual) {
+        sqlBuilder.append("SELECT 'CIF' AS source_type, approver_approval_date, APPROVER_REJECTED_DATE ");
+        sqlBuilder.append("FROM ckyc_dashboard_base ");
+        sqlBuilder.append("WHERE maker_id = :approverId ");
+        
+        List<String> cifConditions = new ArrayList<>();
+        if (viewIndividual) cifConditions.add("account_type_flag IS NULL");
+        if (viewNonIndividual) cifConditions.add("account_type_flag = 'NI'");
+        
+        if (!cifConditions.isEmpty()) {
+            sqlBuilder.append("AND (").append(String.join(" OR ", cifConditions)).append(") ");
+        }
+        
+        sqlBuilder.append("AND (approver_approval_date >= :startDate ");
+        sqlBuilder.append("     OR APPROVER_REJECTED_DATE >= :startDate ");
+        sqlBuilder.append("     OR (approver_approval_date IS NULL AND APPROVER_REJECTED_DATE IS NULL)) ");
+        
+        needsUnion = true;
+    }
+
+    // --- 2. ACCOUNT FLOW (INDIVIDUAL) ---
+    if (viewIndividual) {
+        if (needsUnion) {
+            sqlBuilder.append(" UNION ALL ");
+        }
+        
+        sqlBuilder.append("SELECT 'ACCT' AS source_type, approver_approval_date, APPROVER_REJECTED_DATE ");
+        sqlBuilder.append("FROM account_dashboard_base ");
+        sqlBuilder.append("WHERE maker_id = :approverId ");
+        sqlBuilder.append("AND (approver_approval_date >= :startDate ");
+        sqlBuilder.append("     OR APPROVER_REJECTED_DATE >= :startDate ");
+        sqlBuilder.append("     OR (approver_approval_date IS NULL AND APPROVER_REJECTED_DATE IS NULL)) ");
+        
+        needsUnion = true;
+    }
+
+    // --- 3. ACCOUNT FLOW (NON-INDIVIDUAL) ---
+    if (viewNonIndividual) {
+        if (needsUnion) {
+            sqlBuilder.append(" UNION ALL ");
+        }
+        
+        sqlBuilder.append("SELECT 'ACCT' AS source_type, approver_approval_date, APPROVER_REJECTED_DATE ");
+        sqlBuilder.append("FROM account_dashboard_base_ni ");
+        sqlBuilder.append("WHERE maker_id = :approverId ");
+        sqlBuilder.append("AND (approver_approval_date >= :startDate ");
+        sqlBuilder.append("     OR APPROVER_REJECTED_DATE >= :startDate ");
+        sqlBuilder.append("     OR (approver_approval_date IS NULL AND APPROVER_REJECTED_DATE IS NULL)) ");
+    }
+
+    String finalSql = sqlBuilder.toString();
+    logger.info("CHART_QUERY_EXEC: {}", finalSql);
+
+    try {
+        // 1. Initialize our result map with zero-filled records for the last 6 months
+        Map<String, Map<String, Object>> metricsMap = new java.util.LinkedHashMap<>();
+        for (int i = 5; i >= 0; i--) {
+            String monthStr = currentMonthStart.minusMonths(i).toString(); // "YYYY-MM-01"
+            
+            Map<String, Object> monthData = new HashMap<>();
+            monthData.put("MONTH_KEY", monthStr);
+            monthData.put("CIF_ACCEPTED", 0);
+            monthData.put("CIF_REJECTED", 0);
+            monthData.put("CIF_PENDING", 0);
+            monthData.put("ACCT_ACCEPTED", 0);
+            monthData.put("ACCT_REJECTED", 0);
+            monthData.put("ACCT_PENDING", 0);
+            
+            metricsMap.put(monthStr, monthData);
+        }
+
+        // 2. Execute the stripped-down index scan
+        List<Map<String, Object>> rawResults = ckycNamedParameterJdbcTemplate.queryForList(finalSql, params);
+
+        // 3. Process the rows strictly in Java
+        java.time.LocalDate today = java.time.LocalDate.now();
+        
+        for (Map<String, Object> row : rawResults) {
+            String source = (String) row.get("SOURCE_TYPE");
+            Object approvalDateObj = row.get("APPROVER_APPROVAL_DATE");
+            Object rejectedDateObj = row.get("APPROVER_REJECTED_DATE");
+            
+            String status;
+            java.time.LocalDate eventDate;
+
+            // Determine Status and the applicable Date
+            if (approvalDateObj != null) {
+                status = "ACCEPTED";
+                eventDate = ((java.sql.Timestamp) approvalDateObj).toLocalDateTime().toLocalDate();
+            } else if (rejectedDateObj != null) {
+                status = "REJECTED";
+                eventDate = ((java.sql.Timestamp) rejectedDateObj).toLocalDateTime().toLocalDate();
+            } else {
+                status = "PENDING";
+                eventDate = today; // Resolves pending items to the current month (replicating SYSDATE behavior)
+            }
+
+            // Truncate the date to the first of the month in Java
+            String monthKey = eventDate.withDayOfMonth(1).toString();
+            
+            // Look up the month bucket and increment the counter
+            Map<String, Object> monthData = metricsMap.get(monthKey);
+            if (monthData != null) {
+                String columnKey = source.toUpperCase() + "_" + status;
+                int currentCount = (int) monthData.get(columnKey);
+                monthData.put(columnKey, currentCount + 1);
+            }
+        }
+
+        // 4. Return the aggregated map values as a List
+        List<Map<String, Object>> finalResults = new ArrayList<>(metricsMap.values());
+        
+        logger.info("CHART_DATA_SUCCESS: Retrieved {} months of trend data for User [{}]", finalResults.size(), userId);
+        return finalResults;
+
+    } catch (Exception e) {
+        logger.error("CHART_DATA_FAILURE: Error fetching trend data for User [{}]. Error: {}", userId, e.getMessage(), e);
+        return new ArrayList<>();
+    }
+}
