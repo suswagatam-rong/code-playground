@@ -441,3 +441,31 @@ return the previously processed result.
   429    REQUEST_THROTTLED           Request rejected by admission control
   503    SERVICE_UNAVAILABLE         One or more databases unavailable
   500    INTERNAL_SERVER_ERROR       Unexpected error
+
+
+
+
+
+
+
+
+  --------------------------------------------------------------------------------
+  Field                  Mandatory                  Description
+  ---------------------- -------------------------- ------------------------------
+  transactionReference   Yes                        Unique CRM transaction
+                                                    identifier used for
+                                                    idempotency
+
+  cifNumber              Yes                        Customer CIF Number
+
+  mobileNumber           Yes                        Registered mobile number
+
+  consent                Yes                        YES / NO
+
+  consentTimestamp       Yes                        Time consent was captured by
+                                                    CRM
+
+  agentId                No                         CRM Agent Identifier
+
+  remarks                No                         Additional remarks
+  --------------------------------------------------------------------------------
