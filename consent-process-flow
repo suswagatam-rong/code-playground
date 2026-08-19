@@ -1,154 +1,33 @@
 @startuml
-title Customer CERSAI Consent API - Business Process Flow
+title Customer CERSAI Consent API - Business Process
 
-start
+actor Customer
+participant CRM
+participant "EIS (DMZ)" as EIS
+participant "CERSAI Consent API" as API
 
-:Customer interacts with CRM;
-:CRM obtains customer's consent\nfor CERSAI document download;
+Customer -> CRM: Provide consent
 
-:CRM pushes consent request\nto Consent API through EIS (DMZ);
+CRM -> EIS: Submit customer consent
 
-:Authenticate request;
+EIS -> API: Forward request
 
-if (Authentication successful?) then (Yes)
+API -> API: Identify customer\nand verify details
 
-    :Apply Adaptive Request Admission Control;
+alt Customer not valid
+    API --> EIS: Customer validation failure
+else Customer valid
+    API -> API: Validate consent TAT
 
-    if (Concurrent request limit reached\nor executor queue saturated?) then (Yes)
+    alt TAT expired
+        API --> EIS: Consent not considered\nCustomer eligible for CERSAI download
+    else TAT valid
+        API -> API: Process consent
 
-        :Return HTTP 429;
-        :Code = REQUEST_THROTTLED;
+        API --> EIS: Consent processed
+    end
+end
 
-        stop
-
-    else (No)
-    endif
-
-    :Validate request payload;
-
-    if (Request valid?) then (Yes)
-
-        :Extract transactionReference,\ncifNumber, mobileNumber,\nconsent and consentTimestamp;
-
-        :Resolve customer using CIF\nagainst Oracle RAC;
-
-        if (Database operation successful?) then (Yes)
-
-            if (CIF found?) then (Yes)
-
-                :Retrieve customer record;
-
-                :Verify supplied mobileNumber\nagainst registered mobileNumber;
-
-                if (Mobile number matches?) then (Yes)
-
-                    :Retrieve SMS delivery timestamp;
-
-                    :Calculate consent expiry timestamp;\nSMS Delivery Timestamp + Configured TAT;
-
-                    if (Consent timestamp within TAT?) then (Yes)
-
-                        :Check transactionReference\nfor idempotency;
-
-                        if (Transaction already processed?) then (Yes)
-
-                            :Return previously processed result;
-                            :Code = DUPLICATE_TRANSACTION;
-
-                            stop
-
-                        else (No)
-                        endif
-
-                        :Retrieve latest consent status;
-
-                        if (Existing consent found?) then (Yes)
-
-                            if (Existing consent = Incoming consent?) then (Yes)
-
-                                :No consent update required;
-                                :Code = CONSENT_ALREADY_RECORDED;
-
-                            else (No)
-
-                                :Insert new Consent History record;
-                                :Update Latest Consent status;
-                                :Code = CONSENT_UPDATED;
-
-                            endif
-
-                        else (No)
-
-                            :Insert new Consent History record;
-                            :Update Latest Consent status;
-                            :Code = CONSENT_RECORDED;
-
-                        endif
-
-                        :Commit transaction;
-
-                        :Return standardized SUCCESS response;
-
-                        stop
-
-                    else (No)
-
-                        :Consent TAT expired;
-
-                        :Do not consider the submitted consent;
-
-                        :Customer remains eligible for\nCERSAI document download;
-
-                        :Return HTTP 409;
-                        :Code = CONSENT_TAT_EXPIRED;
-
-                        stop
-
-                    endif
-
-                else (No)
-
-                    :Return HTTP 409;
-                    :Code = CUSTOMER_DETAILS_MISMATCH;
-
-                    stop
-
-                endif
-
-            else (No)
-
-                :Return HTTP 404;
-                :Code = CIF_NOT_FOUND;
-
-                stop
-
-            endif
-
-        else (No)
-
-            :Return HTTP 503;
-            :Code = SERVICE_UNAVAILABLE;
-
-            stop
-
-        endif
-
-    else (No)
-
-        :Return HTTP 400;
-        :Code = VALIDATION_ERROR;
-
-        stop
-
-    endif
-
-else (No)
-
-    :Return HTTP 401;
-    :Code = UNAUTHORIZED;
-
-    stop
-
-endif
+EIS --> CRM: Standard response
 
 @enduml
