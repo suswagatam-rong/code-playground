@@ -1,96 +1,39 @@
 @startuml
-title SMS Delivery Callback - Business Process with Request Throttling
+title SMS Delivery Callback - Business Process
 
 actor "SMS Gateway" as Gateway
 participant "Request Throttler" as Throttler
 participant "SMS Callback Service" as Service
-database "Oracle RAC" as RAC
-participant "Audit / Logging" as Audit
+database "Audit Database" as AuditDB
 
-Gateway -> Throttler: POST /bmg/callback/delivery
+Gateway -> Throttler: Submit delivery callback
 
-Throttler -> Throttler: Check configured\nconcurrency limit
+Throttler -> Throttler: Check request capacity
 
-alt Concurrency capacity available
-
-    Throttler -> Throttler: Increment active request count
+alt Capacity available
 
     Throttler -> Service: Forward callback
 
-    Service -> Service: Authenticate request
+    Service -> Service: Authenticate and validate callback
 
-    alt Authentication successful
+    alt Valid callback
 
-        Service -> Service: Validate callback
-
-        alt Validation successful
-
-            Service -> Audit: Log callback received
-
-            Service -> RAC: Lookup record by UMID
-
-            alt UMID found
-
-                RAC --> Service: Matching record
-
-                Service -> RAC: Update delivery status
-                RAC --> Service: Update successful
-
-                Service -> Audit: Log successful update
-
-                Service --> Throttler: HTTP 200 + "success"
-
-            else UMID not found
-
-                RAC --> Service: No matching record
-
-                Service -> Audit: Log unmatched UMID
-
-                Service --> Throttler: HTTP 200 + "success"
-
-            else RAC unavailable / timeout
-
-                RAC --> Service: Database failure
-
-                Service -> Audit: Log database failure
-
-                Service --> Throttler: HTTP 500
-
-            end
-
-        else Validation failed
-
-            Service -> Audit: Log validation failure
-            Service --> Throttler: HTTP 400
-
-        end
-
-    else Authentication failed
-
-        Service -> Audit: Log authentication failure
-        Service --> Throttler: HTTP 401
-
+        Service -> Service: Process delivery status
+        Service -> AuditDB: Record processing outcome
+        Service --> Throttler: Processing result
+    |||
+    else Invalid callback
+    |||
+        Service --> Throttler: Validation failure
+   |||
     end
-
-    Throttler -> Throttler: Decrement active request count
-
-    Throttler --> Gateway: Response
-
-else Concurrency limit exceeded
-
-    Throttler -> Throttler: Apply configured\nqueue/rejection policy
-
-    alt Request queued
-
-        Throttler -> Throttler: Wait for available\nconcurrency slot
-        Throttler -> Service: Forward callback
-
-    else Request rejected
-
-        Throttler --> Gateway: Throttler response\n(e.g. 429)
-
-    end
-
+    |||
+else Capacity exceeded
+|||
+    Throttler --> Gateway: Request rejected
+|||
 end
+
+Throttler --> Gateway: Response
 
 @enduml
