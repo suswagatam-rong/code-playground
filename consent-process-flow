@@ -3,20 +3,25 @@ title Customer CERSAI Consent API - Business Process Flow
 
 start
 
-:CRM submits CERSAI consent request;
+:Customer interacts with CRM;
+:CRM obtains customer's consent\nfor CERSAI document download;
 
-:Route request through EIS (DMZ);
+:CRM pushes consent request\nto Consent API through EIS (DMZ);
 
 :Authenticate request;
 
 if (Authentication successful?) then (Yes)
 
-    :Apply adaptive request admission control;
+    :Apply Adaptive Request Admission Control;
 
-    if (Concurrent request limit /\nqueue saturation reached?) then (Yes)
+    if (Concurrent request limit reached\nor executor queue saturated?) then (Yes)
+
         :Return HTTP 429;
         :Code = REQUEST_THROTTLED;
+
         stop
+
+    else (No)
     endif
 
     :Validate request payload;
@@ -31,46 +36,51 @@ if (Authentication successful?) then (Yes)
 
             if (CIF found?) then (Yes)
 
-                :Verify supplied mobile number\nagainst registered mobile number;
+                :Retrieve customer record;
+
+                :Verify supplied mobileNumber\nagainst registered mobileNumber;
 
                 if (Mobile number matches?) then (Yes)
 
                     :Retrieve SMS delivery timestamp;
 
-                    :Calculate consent expiry timestamp\n= SMS delivery timestamp + 3 days;
+                    :Calculate consent expiry timestamp;\nSMS Delivery Timestamp + Configured TAT;
 
-                    if (Consent within TAT?) then (Yes)
+                    if (Consent timestamp within TAT?) then (Yes)
 
-                        :Check transactionReference;
+                        :Check transactionReference\nfor idempotency;
 
                         if (Transaction already processed?) then (Yes)
 
                             :Return previously processed result;
                             :Code = DUPLICATE_TRANSACTION;
+
                             stop
+
+                        else (No)
                         endif
 
                         :Retrieve latest consent status;
 
-                        if (Existing consent?) then (Yes)
+                        if (Existing consent found?) then (Yes)
 
                             if (Existing consent = Incoming consent?) then (Yes)
 
-                                :No update required;
+                                :No consent update required;
                                 :Code = CONSENT_ALREADY_RECORDED;
 
                             else (No)
 
-                                :Insert Consent History;
-                                :Update Latest Consent;
+                                :Insert new Consent History record;
+                                :Update Latest Consent status;
                                 :Code = CONSENT_UPDATED;
 
                             endif
 
                         else (No)
 
-                            :Insert Consent History;
-                            :Update Latest Consent;
+                            :Insert new Consent History record;
+                            :Update Latest Consent status;
                             :Code = CONSENT_RECORDED;
 
                         endif
@@ -78,13 +88,20 @@ if (Authentication successful?) then (Yes)
                         :Commit transaction;
 
                         :Return standardized SUCCESS response;
+
                         stop
 
                     else (No)
 
+                        :Consent TAT expired;
+
+                        :Do not consider the submitted consent;
+
+                        :Customer remains eligible for\nCERSAI document download;
+
                         :Return HTTP 409;
                         :Code = CONSENT_TAT_EXPIRED;
-                        :Fresh consent request required;
+
                         stop
 
                     endif
@@ -93,6 +110,7 @@ if (Authentication successful?) then (Yes)
 
                     :Return HTTP 409;
                     :Code = CUSTOMER_DETAILS_MISMATCH;
+
                     stop
 
                 endif
@@ -101,6 +119,7 @@ if (Authentication successful?) then (Yes)
 
                 :Return HTTP 404;
                 :Code = CIF_NOT_FOUND;
+
                 stop
 
             endif
@@ -109,6 +128,7 @@ if (Authentication successful?) then (Yes)
 
             :Return HTTP 503;
             :Code = SERVICE_UNAVAILABLE;
+
             stop
 
         endif
@@ -117,6 +137,7 @@ if (Authentication successful?) then (Yes)
 
         :Return HTTP 400;
         :Code = VALIDATION_ERROR;
+
         stop
 
     endif
@@ -125,6 +146,7 @@ else (No)
 
     :Return HTTP 401;
     :Code = UNAUTHORIZED;
+
     stop
 
 endif
