@@ -1,0 +1,136 @@
+@startuml
+title Customer CERSAI Consent API - Business Process Flow
+
+start
+
+:Receive consent request from CRM;
+
+:Authenticate request via EIS;
+
+if (Authentication successful?) then (Yes)
+
+    :Check adaptive request admission control;
+
+    if (Concurrent request limit /\nqueue saturation reached?) then (Yes)
+        :Return HTTP 429;
+        :Code = REQUEST_THROTTLED;
+        stop
+    else (No)
+    endif
+
+    :Validate request payload;
+
+    if (Request valid?) then (Yes)
+
+        :Extract transactionReference,\ncifNumber, mobileNumber,\nconsent and consentTimestamp;
+
+        :Resolve customer using CIF\nagainst Oracle RAC;
+
+        if (Database operation successful?) then (Yes)
+
+            if (CIF found?) then (Yes)
+
+                :Resolve customer record;
+
+                :Compare supplied mobileNumber\nwith registered mobileNumber;
+
+                if (Mobile number matches?) then (Yes)
+
+                    :Retrieve SMS delivery timestamp;
+
+                    :Calculate consent expiry timestamp\n= SMS delivery timestamp + 3 days;
+
+                    if (Consent timestamp within TAT?) then (Yes)
+
+                        :Check transactionReference;
+
+                        if (Transaction already processed?) then (Yes)
+
+                            :Return previously processed result;
+                            :Code = DUPLICATE_TRANSACTION;
+                            stop
+
+                        else (No)
+                        endif
+
+                        :Retrieve latest consent status;
+
+                        if (Existing consent?) then (Yes)
+
+                            if (Existing consent = Incoming consent?) then (Yes)
+
+                                :No consent update required;
+                                :Code = CONSENT_ALREADY_RECORDED;
+
+                            else (No)
+
+                                :Insert Consent History record;
+                                :Update Latest Consent status;
+                                :Code = CONSENT_UPDATED;
+
+                            endif
+
+                        else (No)
+
+                            :Insert Consent History record;
+                            :Update Latest Consent status;
+                            :Code = CONSENT_RECORDED;
+
+                        endif
+
+                        :Commit transaction;
+
+                        :Build standardized SUCCESS response;
+
+                        stop
+
+                    else (No)
+
+                        :Return HTTP 409;
+                        :Code = CONSENT_TAT_EXPIRED;
+                        :Fresh consent request required;
+                        stop
+
+                    endif
+
+                else (No)
+
+                    :Return HTTP 409;
+                    :Code = CUSTOMER_DETAILS_MISMATCH;
+                    stop
+
+                endif
+
+            else (No)
+
+                :Return HTTP 404;
+                :Code = CIF_NOT_FOUND;
+                stop
+
+            endif
+
+        else (No)
+
+            :Return HTTP 503;
+            :Code = SERVICE_UNAVAILABLE;
+            stop
+
+        endif
+
+    else (No)
+
+        :Return HTTP 400;
+        :Code = VALIDATION_ERROR;
+        stop
+
+    endif
+
+else (No)
+
+    :Return HTTP 401;
+    :Code = UNAUTHORIZED;
+    stop
+
+endif
+
+@enduml
