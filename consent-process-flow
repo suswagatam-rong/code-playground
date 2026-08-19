@@ -3,19 +3,20 @@ title Customer CERSAI Consent API - Business Process Flow
 
 start
 
-:Receive consent request from CRM;
+:CRM submits CERSAI consent request;
 
-:Authenticate request via EIS;
+:Route request through EIS (DMZ);
+
+:Authenticate request;
 
 if (Authentication successful?) then (Yes)
 
-    :Check adaptive request admission control;
+    :Apply adaptive request admission control;
 
     if (Concurrent request limit /\nqueue saturation reached?) then (Yes)
         :Return HTTP 429;
         :Code = REQUEST_THROTTLED;
         stop
-    else (No)
     endif
 
     :Validate request payload;
@@ -30,9 +31,7 @@ if (Authentication successful?) then (Yes)
 
             if (CIF found?) then (Yes)
 
-                :Resolve customer record;
-
-                :Compare supplied mobileNumber\nwith registered mobileNumber;
+                :Verify supplied mobile number\nagainst registered mobile number;
 
                 if (Mobile number matches?) then (Yes)
 
@@ -40,7 +39,7 @@ if (Authentication successful?) then (Yes)
 
                     :Calculate consent expiry timestamp\n= SMS delivery timestamp + 3 days;
 
-                    if (Consent timestamp within TAT?) then (Yes)
+                    if (Consent within TAT?) then (Yes)
 
                         :Check transactionReference;
 
@@ -49,8 +48,6 @@ if (Authentication successful?) then (Yes)
                             :Return previously processed result;
                             :Code = DUPLICATE_TRANSACTION;
                             stop
-
-                        else (No)
                         endif
 
                         :Retrieve latest consent status;
@@ -59,29 +56,28 @@ if (Authentication successful?) then (Yes)
 
                             if (Existing consent = Incoming consent?) then (Yes)
 
-                                :No consent update required;
+                                :No update required;
                                 :Code = CONSENT_ALREADY_RECORDED;
 
                             else (No)
 
-                                :Insert Consent History record;
-                                :Update Latest Consent status;
+                                :Insert Consent History;
+                                :Update Latest Consent;
                                 :Code = CONSENT_UPDATED;
 
                             endif
 
                         else (No)
 
-                            :Insert Consent History record;
-                            :Update Latest Consent status;
+                            :Insert Consent History;
+                            :Update Latest Consent;
                             :Code = CONSENT_RECORDED;
 
                         endif
 
                         :Commit transaction;
 
-                        :Build standardized SUCCESS response;
-
+                        :Return standardized SUCCESS response;
                         stop
 
                     else (No)
